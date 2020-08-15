@@ -1,0 +1,10 @@
+{
+    "compilerOptions": {
+        "moduleResolution": "node",
+        "module": "commonjs",
+        "outDir": "dist/",
+        "target": "ESNext",
+        "sourceMap": true,
+        "esModuleInterop": true
+    }
+}

@@ -1,0 +1,9 @@
+{
+    "restartable": "rs",
+    "execMap": {
+        "ts": "ts-node"
+    },
+    "env": {
+    },
+    "ext": "ts"
+}

@@ -1,0 +1,34 @@
+{
+  "name": "TG_StickerBot",
+  "version": "0.0.1",
+  "description": "A telegram bot converting image scales as required by stickers.",
+  "main": "dist/index.js",
+  "repository": "https://github.com/FerricIon/TG_StickerBot.git",
+  "author": "FerricIon",
+  "license": "MIT",
+  "dependencies": {
+    "got": "^11.5.2",
+    "sharp": "^0.25.4",
+    "telegraf": "^3.38.0"
+  },
+  "devDependencies": {
+    "@types/node": "^14.0.27",
+    "@types/sharp": "^0.25.1",
+    "@typescript-eslint/eslint-plugin": "^3.8.0",
+    "@typescript-eslint/parser": "^3.8.0",
+    "eslint": "^7.6.0",
+    "eslint-config-prettier": "^6.11.0",
+    "global-agent": "^2.1.12",
+    "nodemon": "^2.0.4",
+    "prettier": "^2.0.5",
+    "ts-node": "^8.10.2",
+    "typescript": "^3.9.7"
+  },
+  "env": {},
+  "scripts": {
+    "build": "tsc",
+    "prestart": "yarn build",
+    "start": "node ./dist/index.js",
+    "dev": "nodemon -r global-agent/bootstrap ./index.ts"
+  }
+}
