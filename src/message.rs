@@ -1,6 +1,5 @@
 use crate::{convert::*, errors::*, types::*};
 use enum_iterator::IntoEnumIterator;
-use log::error;
 use teloxide::{
     adaptors::AutoSend,
     payloads::{AnswerCallbackQuerySetters, SendMessageSetters},
@@ -141,7 +140,7 @@ pub async fn message_handler(m: Message, bot: AutoSend<Bot>) -> Result<(), Reque
                 .await?;
         }
         Err(e) => {
-            error!("{}", e);
+            log::error!("{}", e);
             bot.send_message(m.chat_id(), e.to_string())
                 .reply_to_message_id(m.id)
                 .await?;
@@ -197,7 +196,7 @@ pub async fn callback_handler(q: CallbackQuery, bot: AutoSend<Bot>) -> Result<()
             bot.answer_callback_query(q.id).await?;
         }
         Err(e) => {
-            error!("{}", e);
+            log::error!("{}", e);
             bot.answer_callback_query(q.id).text(e.to_string()).await?;
         }
     }

@@ -149,7 +149,9 @@ pub async fn convert(
         return Err(ConvertError::FileSize(file_size as u64));
     }
 
-    let (tmp_file, tmp_path) = NamedTempFile::new().expect("create tempfile").into_parts();
+    let (tmp_file, tmp_path) = NamedTempFile::new()
+        .expect("tempfile is created")
+        .into_parts();
     let mut tmp_file: File = tmp_file.into();
     bot.download_file(&file_path, &mut tmp_file)
         .await

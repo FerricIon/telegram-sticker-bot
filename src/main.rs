@@ -25,16 +25,17 @@ async fn main() {
 
 async fn webhook(bot: AutoSend<Bot>) -> impl update_listeners::UpdateListener<Infallible> {
     // Heroku auto defines a port value
-    let teloxide_token = env::var("TELOXIDE_TOKEN").expect("TELOXIDE_TOKEN env variable missing");
+    let teloxide_token = env::var("TELOXIDE_TOKEN").expect("TELOXIDE_TOKEN is set");
     let port: u16 = env::var("PORT")
-        .expect("have PORT env variable")
+        .expect("PORT is set")
         .parse()
-        .expect("PORT value to be integer");
-    let host = env::var("HOST").expect("have HOST env variable");
+        .expect("PORT is u16");
+    let host = env::var("HOST").expect("HOST is set");
     let path = format!("bot{}", teloxide_token);
     let url = Url::parse(&format!("https://{}/{}", host, path)).unwrap();
 
-    bot.set_webhook(url).await.expect("Cannot setup a webhook");
+    bot.set_webhook(url).await.expect("setup the webhook");
+    log::info!("Bot webhook set.");
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -48,7 +49,7 @@ async fn webhook(bot: AutoSend<Bot>) -> impl update_listeners::UpdateListener<In
         .and(warp::body::json())
         .map(move |update: Update| {
             tx.send(Ok(update))
-                .expect("Cannot send an incoming update from the webhook");
+                .expect("send an incoming update from the webhook");
 
             StatusCode::OK
         })
