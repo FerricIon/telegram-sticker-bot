@@ -106,13 +106,14 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
     } else {
         String::new()
     };
-    // https://superuser.com/questions/1362352/how-do-i-resize-an-animated-gif-and-keep-transparency/1362406#1362406
-    let vf = format!("format=yuva420p,fps=30{}{},split [a][b]; [a] palettegen=reserve_transparent=on:transparency_color=ffffff [p]; [b][p] paletteuse", scale, pad);
+    let vf = format!("format=yuva420p,fps=30{}{}", scale, pad);
 
     Ok(Command::new("ffmpeg")
         .args([
             "-i",
             path.to_str().expect("path of tempfile"),
+            "-pix_fmt",
+            "yuva420p",
             "-c:v",
             "libvpx-vp9",
             "-b:v",
