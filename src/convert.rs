@@ -80,7 +80,7 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
     let height: u32 = parse(probe.get(1), "height")?;
     let duration: f32 = parse(probe.get(2), "duration")?;
     log::debug!("video metadata: {}*{}, {:.3}s", width, height, duration);
-    anyhow::ensure!(duration > 3.0, ConvertError::Duration(duration));
+    anyhow::ensure!(duration <= 3.0, ConvertError::Duration(duration));
 
     if config.is_none() {
         config.replace((width, height).into());
