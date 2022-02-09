@@ -3,7 +3,7 @@ use image::{
     imageops::FilterType, io::Reader as ImageReader, GenericImage, ImageOutputFormat, Rgba,
     RgbaImage,
 };
-use std::{io::Cursor, path::Path, process::Stdio};
+use std::{io::Cursor, path::Path, process::Stdio, str::FromStr};
 use teloxide::{
     adaptors::AutoSend, net::Download, prelude::Requester, types::File as TgFile, types::InputFile,
     Bot,
@@ -50,16 +50,14 @@ fn convert_image(path: &Path, config: &mut Option<ConvertConfig>) -> anyhow::Res
 }
 
 async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyhow::Result<Vec<u8>> {
+    #[rustfmt::skip]
+    let args = [
+        "-select_streams", "v", "-show_entries", "stream=width,height:format=duration",
+        "-of", "default=nokey=1:noprint_wrappers=1",
+        path.to_str().expect("path of tempfile"),
+    ];
     let probe = Command::new("ffprobe")
-        .args([
-            "-select_streams",
-            "v",
-            "-show_entries",
-            "stream=width,height:format=duration",
-            "-of",
-            "default=nokey=1:noprint_wrappers=1",
-            path.to_str().expect("path of tempfile"),
-        ])
+        .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
@@ -67,18 +65,14 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
         .stdout;
     let probe: Vec<_> = std::str::from_utf8(&probe)?.split('\n').collect();
 
-    let width = *probe.get(0).unwrap_or(&"");
-    let width: u32 = width
-        .parse()
-        .map_err(|_| ConvertError::Format("width".to_string(), width.to_string()))?;
-    let height = *probe.get(1).unwrap_or(&"");
-    let height: u32 = height
-        .parse()
-        .map_err(|_| ConvertError::Format("height".to_string(), width.to_string()))?;
-    let duration = *probe.get(2).unwrap_or(&"");
-    let duration: f32 = duration
-        .parse()
-        .map_err(|_| ConvertError::Format("duration".to_string(), width.to_string()))?;
+    fn parse<T: FromStr>(s: Option<&&str>, name: &str) -> Result<T, ConvertError> {
+        let s = *s.unwrap_or(&"");
+        s.parse()
+            .map_err(|_| ConvertError::Format(name.to_owned(), s.to_owned()))
+    }
+    let width: u32 = parse(probe.get(0), "width")?;
+    let height: u32 = parse(probe.get(1), "height")?;
+    let duration: f32 = parse(probe.get(2), "duration")?;
     if duration > 3.0 {
         return Err(ConvertError::Duration(duration).into());
     }
@@ -108,25 +102,14 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
     };
     let vf = format!("format=yuva420p,fps=30{}{}", scale, pad);
 
+    #[rustfmt::skip]
+    let args =  [
+        "-i", path.to_str().expect("path of tempfile"),
+        "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "35",
+        "-an", "-vf", &vf, "-f", "webm", "-",
+    ];
     Ok(Command::new("ffmpeg")
-        .args([
-            "-i",
-            path.to_str().expect("path of tempfile"),
-            "-pix_fmt",
-            "yuva420p",
-            "-c:v",
-            "libvpx-vp9",
-            "-b:v",
-            "0",
-            "-crf",
-            "35",
-            "-an",
-            "-vf",
-            &vf,
-            "-f",
-            "webm",
-            "-",
-        ])
+        .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
