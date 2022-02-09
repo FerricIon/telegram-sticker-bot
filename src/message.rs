@@ -106,24 +106,31 @@ pub async fn command_handler(
     cmd: Command,
 ) -> Result<(), RequestError> {
     let text = match cmd {
-    Command::Start => "Welcome\\! Please send me an image or a video clip\\.",
-    Command::Help => "Send me an image or a video clip and I will convert it into the format required by @Stickers\\.
+        Command::Start => r#"Welcome\! Please send me an image or a video clip\."#,
+        Command::Help => {
+            r#"Send me an image or a video clip and I will convert it into the format required by @Stickers\.
 On successful convertion, you may forward the replied document to @Stickers to make your sticker set, or click on the buttons to change the conversion style:
 
-\\- Sticker Size
-  *Small* the converted sticker will fit in a box of 512px\\*128px and add transparent paddings
-  *Medium* the converted sticker will fit in a box of 512px\\*256px and add transparent paddings
-  *Large* the converted sticker will fit in a box of 512px\\*512px
-\\- Sticker Positioning \\(for small and medium sized stickers\\)
+\- Sticker Size
+  *Small* the converted sticker will fit in a box of 512px\*128px and add transparent paddings
+  *Medium* the converted sticker will fit in a box of 512px\*256px and add transparent paddings
+  *Large* the converted sticker will fit in a box of 512px\*512px
+\- Sticker Positioning \(for small and medium sized stickers\)
   *Left* place the sticker on the left
   *Center* place the sticker in the middle
   *Rignt* place the sticker on the right
-  
+
+Notes on translucent GIF:
+Telegram will re\-encode all GIFs you send to *mpeg4* which does not have an alpha channel even if you send the GIF "without compression", and thus the bot could never get the original GIF\. If you need translucent video stickers, consider converting the GIF to *WebM* format with online tools and resizing the video clip using this bot\.
+Refer to: [GIF Revolution](https://telegram.org/blog/gif-revolution)
+
 Maintainer: @ferricion
-Github Repository: [telegram\\-sticker\\-bot](https://github.com/FerricIon/telegram-sticker-bot)"
+Github Repository: [telegram\-sticker\-bot](https://github.com/FerricIon/telegram-sticker-bot)"#
+        }
     };
 
     bot.send_message(m.chat_id(), text)
+        .disable_web_page_preview(true)
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
         .await?;
 
