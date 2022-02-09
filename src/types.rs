@@ -42,14 +42,13 @@ impl ConvertSize {
             Self::Medium => 256,
             Self::Large => 512,
         };
-        let scale = f32::min(
-            t_width as f32 / width as f32,
-            t_height as f32 / height as f32,
-        );
-        (
-            (width as f32 * scale) as u32,
-            (height as f32 * scale) as u32,
-        )
+        let n_width = ((width * t_height) as f32 / height as f32) as u32;
+        let n_height = ((height * t_width) as f32 / width as f32) as u32;
+        if n_width <= t_width {
+            (n_width, t_height)
+        } else {
+            (t_width, n_height)
+        }
     }
 }
 impl ToString for ConvertSize {
