@@ -3,7 +3,12 @@ use image::{
     imageops::FilterType, io::Reader as ImageReader, GenericImage, ImageOutputFormat, Rgba,
     RgbaImage,
 };
-use std::{io::Cursor, path::Path, process::Stdio, str::FromStr};
+use std::{
+    io::Cursor,
+    path::Path,
+    process::{Output, Stdio},
+    str::FromStr,
+};
 use teloxide::{
     adaptors::AutoSend, net::Download, prelude::Requester, types::File as TgFile, types::InputFile,
     Bot,
@@ -57,14 +62,14 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
         "-of", "default=nokey=1:noprint_wrappers=1",
         path.to_str().expect("path of tempfile"),
     ];
-    let probe = Command::new("ffprobe")
+    let Output { stdout, status, .. } = Command::new("ffprobe")
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
-        .await?
-        .stdout;
-    let probe: Vec<_> = std::str::from_utf8(&probe)?.split('\n').collect();
+        .await?;
+    anyhow::ensure!(status.success(), "ffprobe exited with {:?}", status.code());
+    let probe: Vec<_> = std::str::from_utf8(&stdout)?.split('\n').collect();
 
     fn parse<T: FromStr>(s: Option<&&str>, name: &str) -> Result<T, ConvertError> {
         let s = *s.unwrap_or(&"");
@@ -75,9 +80,7 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
     let height: u32 = parse(probe.get(1), "height")?;
     let duration: f32 = parse(probe.get(2), "duration")?;
     log::debug!("video metadata: {}*{}, {:.3}s", width, height, duration);
-    if duration > 3.0 {
-        return Err(ConvertError::Duration(duration).into());
-    }
+    anyhow::ensure!(duration > 3.0, ConvertError::Duration(duration));
 
     if config.is_none() {
         config.replace((width, height).into());
@@ -112,15 +115,15 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
         "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "35",
         "-an", "-vf", &vf, "-f", "webm", "-",
     ];
-    let output = Command::new("ffmpeg")
+    let Output { stdout, status, .. } = Command::new("ffmpeg")
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
-        .await?
-        .stdout;
-    log::debug!("output length: {}.", output.len());
-    Ok(output)
+        .await?;
+    anyhow::ensure!(status.success(), "ffmpeg exited with {:?}", status.code());
+    log::debug!("output length: {}.", stdout.len());
+    Ok(stdout)
 }
 
 pub async fn convert(
