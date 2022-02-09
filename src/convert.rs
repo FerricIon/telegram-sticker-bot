@@ -50,6 +50,7 @@ fn convert_image(path: &Path, config: &mut Option<ConvertConfig>) -> anyhow::Res
 }
 
 async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyhow::Result<Vec<u8>> {
+    log::debug!("convert a video with config: {:?}...", config);
     #[rustfmt::skip]
     let args = [
         "-select_streams", "v", "-show_entries", "stream=width,height:format=duration",
@@ -73,6 +74,7 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
     let width: u32 = parse(probe.get(0), "width")?;
     let height: u32 = parse(probe.get(1), "height")?;
     let duration: f32 = parse(probe.get(2), "duration")?;
+    log::debug!("video metadata: {}*{}, {:.3}s", width, height, duration);
     if duration > 3.0 {
         return Err(ConvertError::Duration(duration).into());
     }
@@ -91,6 +93,7 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
         }
     );
     let (width, height) = config.size.resize(width, height);
+    log::debug!("estimated demensions: {}*{}.", width, height);
     let pad = if width < 512 && height < 512 {
         match config.position {
             Some(ConvertPosition::Left) | None => format!(",pad=512:{}:0:0:black@0", height),
@@ -101,6 +104,7 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
         String::new()
     };
     let vf = format!("format=yuva420p,fps=30{}{}", scale, pad);
+    log::debug!("ffmpeg vf: {}", vf);
 
     #[rustfmt::skip]
     let args =  [
@@ -108,13 +112,15 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
         "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "35",
         "-an", "-vf", &vf, "-f", "webm", "-",
     ];
-    Ok(Command::new("ffmpeg")
+    let output = Command::new("ffmpeg")
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
         .await?
-        .stdout)
+        .stdout;
+    log::debug!("output length: {}.", output.len());
+    Ok(output)
 }
 
 pub async fn convert(

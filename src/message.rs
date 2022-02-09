@@ -93,6 +93,7 @@ async fn convert_message(
             None
         }
     };
+    log::debug!("convert {:?}...", media);
     if let Some((file_id, media_type)) = media {
         convert(bot, file_id, media_type, config).await
     } else {
@@ -164,6 +165,8 @@ pub async fn callback_handler(q: CallbackQuery, bot: AutoSend<Bot>) -> Result<()
         let config_string = q.data.unwrap_or_default();
         let size = config_string.parse::<ConvertSize>();
         let position = config_string.parse::<ConvertPosition>();
+        log::debug!("original config: {:?}.", config);
+        log::debug!("callback: size={:?}, position={:?}.", size, position);
         let mut config = Some(match (config.size, size, position) {
             (_, Ok(ConvertSize::Large), _) => Ok(ConvertConfig {
                 size: ConvertSize::Large,
