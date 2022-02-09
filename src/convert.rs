@@ -108,25 +108,23 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
     };
     let vf = format!("format=yuva420p,fps=30{}{}", scale, pad);
 
+    #[rustfmt::skip]
+    let args = vec![
+        "-i", path.to_str().expect("path of tempfile"),
+        "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "35",
+        "-an", "-vf", &vf,
+        "-f", "webm", "-",
+    ];
+    log::debug!("Calling ffmpeg with {:?}.", args);
+    let checksum = Command::new("md5sum")
+        .arg(path.to_str().expect("path of tempfile"))
+        .stdout(Stdio::piped())
+        .output()
+        .await?
+        .stdout;
+    log::debug!("Checksum: {}.", std::str::from_utf8(&checksum).unwrap());
     Ok(Command::new("ffmpeg")
-        .args([
-            "-i",
-            path.to_str().expect("path of tempfile"),
-            "-pix_fmt",
-            "yuva420p",
-            "-c:v",
-            "libvpx-vp9",
-            "-b:v",
-            "0",
-            "-crf",
-            "35",
-            "-an",
-            "-vf",
-            &vf,
-            "-f",
-            "webm",
-            "-",
-        ])
+        .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()

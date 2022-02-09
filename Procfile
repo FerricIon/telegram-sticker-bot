@@ -1,1 +1,1 @@
-web: ./target/release/telegram-sticker-bot
+web: env RUST_LOG=debug ./target/release/telegram-sticker-bot
