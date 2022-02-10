@@ -1,6 +1,6 @@
 use crate::errors::*;
 use enum_iterator::IntoEnumIterator;
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 use teloxide::utils::command::BotCommand;
 
 #[derive(Debug, BotCommand, Clone)]
@@ -51,14 +51,17 @@ impl ConvertSize {
         }
     }
 }
-impl ToString for ConvertSize {
-    fn to_string(&self) -> String {
-        match self {
-            Self::Small => "Small",
-            Self::Medium => "Medium",
-            Self::Large => "Large",
-        }
-        .to_string()
+impl Display for ConvertSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Small => "Small",
+                Self::Medium => "Medium",
+                Self::Large => "Large",
+            }
+        )
     }
 }
 impl FromStr for ConvertSize {
@@ -72,14 +75,17 @@ impl FromStr for ConvertSize {
         }
     }
 }
-impl ToString for ConvertPosition {
-    fn to_string(&self) -> String {
-        match self {
-            Self::Left => "Left",
-            Self::Center => "Center",
-            Self::Right => "Right",
-        }
-        .to_string()
+impl Display for ConvertPosition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Left => "Left",
+                Self::Center => "Center",
+                Self::Right => "Right",
+            }
+        )
     }
 }
 impl FromStr for ConvertPosition {
@@ -91,6 +97,16 @@ impl FromStr for ConvertPosition {
             "Right" => Ok(Self::Right),
             _ => Err(ConfigError::Parse(s.to_owned())),
         }
+    }
+}
+impl Display for ConvertConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{},{}",
+            self.size,
+            self.position.map(|o| o.to_string()).unwrap_or_default()
+        )
     }
 }
 impl From<(u32, u32)> for ConvertConfig {

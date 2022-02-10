@@ -2,7 +2,10 @@ use crate::{convert::*, errors::*, types::*};
 use enum_iterator::IntoEnumIterator;
 use teloxide::{
     adaptors::AutoSend,
-    payloads::{AnswerCallbackQuerySetters, SendMessageSetters},
+    payloads::{
+        AnswerCallbackQuerySetters, EditMessageCaptionSetters, SendDocumentSetters,
+        SendMessageSetters,
+    },
     prelude2::*,
     types::{
         CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMedia,
@@ -12,23 +15,20 @@ use teloxide::{
 };
 
 fn get_config(m: &Message) -> Option<ConvertConfig> {
-    if let Some(markup) = m.reply_markup() {
-        let size = ConvertSize::into_enum_iter()
-            .zip(markup.inline_keyboard[0].iter())
-            .find(|(size, button)| Ok(size.to_owned()) != button.text.parse())
-            .map_or(ConvertSize::Large, |x| x.0);
-        let position = if size != ConvertSize::Large {
-            ConvertPosition::into_enum_iter()
-                .zip(markup.inline_keyboard[1].iter())
-                .find(|(position, button)| Ok(position.to_owned()) != button.text.parse())
-                .map(|x| x.0)
+    (|| -> anyhow::Result<ConvertConfig> {
+        let caption = m.caption().unwrap_or("");
+        let arr: Vec<_> = caption.split(',').collect();
+        anyhow::ensure!(arr.len() == 2);
+        let size: ConvertSize = arr[0].parse()?;
+        let position: Option<ConvertPosition> = if size != ConvertSize::Large {
+            Some(arr[1].parse()?)
         } else {
+            anyhow::ensure!(arr[1] == "");
             None
         };
-        Some(ConvertConfig { size, position })
-    } else {
-        None
-    }
+        Ok(ConvertConfig { size, position })
+    })()
+    .ok()
 }
 
 fn make_keyboard(config: ConvertConfig) -> InlineKeyboardMarkup {
@@ -143,6 +143,7 @@ pub async fn message_handler(m: Message, bot: AutoSend<Bot>) -> Result<(), Reque
     match convert_message(&m, &bot, &mut config).await {
         Ok(document) => {
             bot.send_document(m.chat_id(), document)
+                .caption(config.expect("config is set").to_string())
                 .reply_to_message_id(m.id)
                 .reply_markup(make_keyboard(config.expect("config is set")))
                 .await?;
@@ -200,6 +201,9 @@ pub async fn callback_handler(q: CallbackQuery, bot: AutoSend<Bot>) -> Result<()
                 InputMedia::Document(InputMediaDocument::new(document)),
             )
             .await?;
+            bot.edit_message_caption(m.chat_id(), m.id)
+                .caption(config.expect("config is set").to_string())
+                .await?;
             bot.edit_message_reply_markup(m.chat_id(), m.id)
                 .reply_markup(make_keyboard(config.expect("config is set")))
                 .await?;
