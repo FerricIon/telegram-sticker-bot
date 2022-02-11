@@ -1,5 +1,4 @@
 use crate::{convert::*, errors::*, types::*};
-use enum_iterator::IntoEnumIterator;
 use teloxide::{
     adaptors::AutoSend,
     payloads::{
@@ -9,59 +8,55 @@ use teloxide::{
     prelude2::*,
     types::{
         CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMedia,
-        InputMediaDocument, Message,
+        InputMediaDocument, Message, True,
     },
     Bot, RequestError,
 };
 
-fn get_config(m: &Message) -> Option<ConvertConfig> {
-    (|| -> anyhow::Result<ConvertConfig> {
-        let caption = m.caption().unwrap_or("");
-        let arr: Vec<_> = caption.split(',').collect();
-        anyhow::ensure!(arr.len() == 2);
-        let size: ConvertSize = arr[0].parse()?;
-        let position: Option<ConvertPosition> = if size != ConvertSize::Large {
-            Some(arr[1].parse()?)
-        } else {
-            anyhow::ensure!(arr[1] == "");
-            None
-        };
-        Ok(ConvertConfig { size, position })
-    })()
-    .ok()
+fn get_props(m: &Message) -> (Option<LayoutProp>, Option<PlaybackProp>) {
+    let caption = m.caption().unwrap_or("");
+    let arr: Vec<_> = caption.split(';').collect();
+    let layout: Option<LayoutProp> = arr.get(0).and_then(|s| s.parse().ok());
+    let playback: Option<PlaybackProp> = arr.get(1).and_then(|s| s.parse().ok());
+    (layout, playback)
 }
 
-fn make_keyboard(config: ConvertConfig) -> InlineKeyboardMarkup {
+fn make_caption(layout: LayoutProp, playback: Option<PlaybackProp>) -> String {
+    log::debug!("make_caption: {:?}, {:?}", layout, playback);
+    format!(
+        "{};{}",
+        layout,
+        playback.map(|o| o.to_string()).unwrap_or_default()
+    )
+}
+
+fn make_layout_keyboard(layout: LayoutProp) -> InlineKeyboardMarkup {
+    log::debug!("make_layout_keyboard: {:?}", layout);
+    use Callback::*;
+
+    fn make_buttons(set: &[Callback], cur: Callback) -> Vec<InlineKeyboardButton> {
+        set.iter()
+            .filter_map(|&x| if x != cur { Some(x.into()) } else { None })
+            .collect()
+    }
+
+    let size_callback = [Small, Medium, Large];
+    let position_callback = [Left, Center, Right];
+
     let mut keyboard: Vec<Vec<InlineKeyboardButton>> = Vec::new();
-    keyboard.push(
-        ConvertSize::into_enum_iter()
-            .filter_map(|size| {
-                if size != config.size {
-                    Some(InlineKeyboardButton::callback(
-                        size.to_string(),
-                        size.to_string(),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect(),
-    );
-    if config.size != ConvertSize::Large {
-        keyboard.push(
-            ConvertPosition::into_enum_iter()
-                .filter_map(|position| {
-                    if Some(position) != config.position {
-                        Some(InlineKeyboardButton::callback(
-                            position.to_string(),
-                            position.to_string(),
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-        );
+
+    match layout {
+        LayoutProp::Small(p) => {
+            keyboard.push(make_buttons(&size_callback, Small));
+            keyboard.push(make_buttons(&position_callback, p.into()));
+        }
+        LayoutProp::Medium(p) => {
+            keyboard.push(make_buttons(&size_callback, Medium));
+            keyboard.push(make_buttons(&position_callback, p.into()));
+        }
+        LayoutProp::Large => {
+            keyboard.push(make_buttons(&size_callback, Large));
+        }
     }
 
     InlineKeyboardMarkup::new(keyboard)
@@ -70,8 +65,9 @@ fn make_keyboard(config: ConvertConfig) -> InlineKeyboardMarkup {
 async fn convert_message(
     m: &Message,
     bot: &AutoSend<Bot>,
-    config: &mut Option<ConvertConfig>,
-) -> Result<InputFile, ConvertError> {
+    layout: Option<LayoutProp>,
+    playback: Option<PlaybackProp>,
+) -> Result<(InputFile, LayoutProp, Option<PlaybackProp>), ConvertError> {
     let media = {
         if let Some(doc) = m.document() {
             let mime = doc.mime_type.clone();
@@ -95,7 +91,7 @@ async fn convert_message(
     };
     log::debug!("convert {:?}...", media);
     if let Some((file_id, media_type)) = media {
-        convert(bot, file_id, media_type, config).await
+        convert(bot, file_id, media_type, layout, playback).await
     } else {
         Err(ConvertError::MediaType)
     }
@@ -139,62 +135,78 @@ Github Repository: [telegram\-sticker\-bot](https://github.com/FerricIon/telegra
 }
 
 pub async fn message_handler(m: Message, bot: AutoSend<Bot>) -> Result<(), RequestError> {
-    let mut config = None;
-    match convert_message(&m, &bot, &mut config).await {
-        Ok(document) => {
+    match convert_message(&m, &bot, None, None).await {
+        Ok((document, layout, playback)) => {
             bot.send_document(m.chat_id(), document)
-                .caption(config.expect("config is set").to_string())
+                .caption(make_caption(layout, playback))
                 .reply_to_message_id(m.id)
-                .reply_markup(make_keyboard(config.expect("config is set")))
+                .reply_markup(make_layout_keyboard(layout))
                 .await?;
         }
         Err(e) => {
             log::error!("{}", e);
-            bot.send_message(m.chat_id(), e.to_string())
-                .reply_to_message_id(m.id)
-                .await?;
+            let mut res = bot
+                .send_message(m.chat_id(), e.to_string())
+                .reply_to_message_id(m.id);
+            if let ConvertError::Duration(_) = e {
+                let keyboard = vec![vec![Callback::SpeedUp.into()]];
+                res = res.reply_markup(InlineKeyboardMarkup::new(keyboard));
+            }
+            res.await?;
         }
     };
 
     Ok(())
 }
 
-pub async fn callback_handler(q: CallbackQuery, bot: AutoSend<Bot>) -> Result<(), RequestError> {
-    let result = (|| async {
-        let m = q.message.ok_or(ConfigError::Message)?;
-        let config = get_config(&m).ok_or(ConfigError::Message)?;
-        let config_string = q.data.unwrap_or_default();
-        let size = config_string.parse::<ConvertSize>();
-        let position = config_string.parse::<ConvertPosition>();
-        log::debug!("original config: {:?}.", config);
-        log::debug!("callback: size={:?}, position={:?}.", size, position);
-        let mut config = Some(match (config.size, size, position) {
-            (_, Ok(ConvertSize::Large), _) => Ok(ConvertConfig {
-                size: ConvertSize::Large,
-                position: None,
-            }),
-            (_, Ok(size), _) => Ok(ConvertConfig {
-                size,
-                position: config.position.or(Some(ConvertPosition::Center)),
-            }),
-            (ConvertSize::Small | ConvertSize::Medium, _, Ok(position)) => Ok(ConvertConfig {
-                size: config.size,
-                position: Some(position),
-            }),
-            _ => Err(ConfigError::Parse(config_string)),
-        }?);
-        let document = convert_message(
-            m.reply_to_message().ok_or(ConfigError::Reply)?,
-            &bot,
-            &mut config,
-        )
-        .await?;
-        anyhow::Result::<_>::Ok((m, document, config))
+pub async fn speed_up_handler(q: CallbackQuery, bot: AutoSend<Bot>) -> Result<True, RequestError> {
+    let r = (|| async {
+        let m = q.message.ok_or(PropsError::Message)?;
+        let m_origin = m.reply_to_message().ok_or(PropsError::Origin)?.to_owned();
+        let (document, layout, playback) =
+            convert_message(&m_origin, &bot, None, Some(PlaybackProp { speed_up: true })).await?;
+        anyhow::Ok((m, m_origin, document, layout, playback))
     })()
     .await;
 
-    match result {
-        Ok((m, document, config)) => {
+    match r {
+        Ok((m, m_origin, document, layout, playback)) => {
+            bot.delete_message(m.chat_id(), m.id).await?;
+            bot.send_document(m.chat_id(), document)
+                .caption(make_caption(layout, playback))
+                .reply_to_message_id(m_origin.id)
+                .reply_markup(make_layout_keyboard(layout))
+                .await?;
+            bot.answer_callback_query(q.id).await
+        }
+        Err(e) => {
+            log::error!("{}", e);
+            bot.answer_callback_query(q.id).text(e.to_string()).await
+        }
+    }
+}
+
+pub async fn layout_handler(q: CallbackQuery, bot: AutoSend<Bot>) -> Result<True, RequestError> {
+    let r = (|| async {
+        let m = q.message.ok_or(PropsError::Message)?;
+        let m_origin = m.reply_to_message().ok_or(PropsError::Origin)?.to_owned();
+        let (layout, playback) = get_props(&m);
+        let layout = layout.ok_or(PropsError::Message)?;
+        let callback: Callback = q.data.unwrap_or_default().parse()?;
+        let layout = match callback.kind() {
+            CallbackKind::Size => layout.reset_size(callback),
+            CallbackKind::Position => layout.reset_alignment(callback),
+            _ => Err(CallbackError::Incompatible),
+        }?;
+
+        let (document, layout, playback) =
+            convert_message(&m_origin, &bot, Some(layout), playback).await?;
+        anyhow::Result::<_>::Ok((m, document, layout, playback))
+    })()
+    .await;
+
+    match r {
+        Ok((m, document, layout, playback)) => {
             bot.edit_message_media(
                 m.chat_id(),
                 m.id,
@@ -202,18 +214,27 @@ pub async fn callback_handler(q: CallbackQuery, bot: AutoSend<Bot>) -> Result<()
             )
             .await?;
             bot.edit_message_caption(m.chat_id(), m.id)
-                .caption(config.expect("config is set").to_string())
+                .caption(make_caption(layout, playback))
                 .await?;
             bot.edit_message_reply_markup(m.chat_id(), m.id)
-                .reply_markup(make_keyboard(config.expect("config is set")))
+                .reply_markup(make_layout_keyboard(layout))
                 .await?;
-            bot.answer_callback_query(q.id).await?;
+            bot.answer_callback_query(q.id).await
         }
         Err(e) => {
             log::error!("{}", e);
-            bot.answer_callback_query(q.id).text(e.to_string()).await?;
+            bot.answer_callback_query(q.id).text(e.to_string()).await
         }
     }
+}
 
-    Ok(())
+pub async fn callback_handler(q: CallbackQuery, bot: AutoSend<Bot>) -> Result<(), RequestError> {
+    match q.data.to_owned().unwrap_or_default().parse::<Callback>() {
+        Ok(callback) => match callback.kind() {
+            CallbackKind::Size | CallbackKind::Position => layout_handler(q, bot).await,
+            CallbackKind::Time => speed_up_handler(q, bot).await,
+        },
+        Err(e) => bot.answer_callback_query(q.id).text(e.to_string()).await,
+    }
+    .map(|_| ())
 }

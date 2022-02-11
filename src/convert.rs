@@ -17,45 +17,32 @@ use tempfile::NamedTempFile;
 use tokio::{fs::File, process::Command};
 use ubyte::ToByteUnit;
 
-fn convert_image(path: &Path, config: &mut Option<ConvertConfig>) -> anyhow::Result<Vec<u8>> {
+fn convert_image(path: &Path, layout: Option<LayoutProp>) -> anyhow::Result<(Vec<u8>, LayoutProp)> {
     let img = ImageReader::open(path)?.with_guessed_format()?.decode()?;
     let (width, height) = (img.width(), img.height());
 
-    if config.is_none() {
-        config.replace((width, height).into());
-    }
-    let config = config.unwrap();
+    let layout = layout.unwrap_or((width, height).into());
+    let (b_width, b_height, pad_x) = layout.resize(width, height);
 
-    let mut img = img.resize(
-        512,
-        match config.size {
-            ConvertSize::Small => 128,
-            ConvertSize::Medium => 256,
-            ConvertSize::Large => 512,
-        },
-        FilterType::CatmullRom,
-    );
-    let (width, height) = (img.width(), img.height());
-    if width < 512 && height < 512 {
-        let mut canvas = RgbaImage::from_pixel(512, height, Rgba([0; 4]));
-        canvas.copy_from(
-            &img,
-            match config.position {
-                Some(ConvertPosition::Left) | None => 0,
-                Some(ConvertPosition::Center) => (512 - width) / 2,
-                Some(ConvertPosition::Right) => 512 - width,
-            },
-            0,
-        )?;
-        img = canvas.into();
-    }
+    let img = img.resize(b_width, b_height, FilterType::CatmullRom);
+    let img = pad_x
+        .and_then(|x| {
+            let mut canvas = RgbaImage::from_pixel(b_width, b_height, Rgba([0; 4]));
+            canvas.copy_from(&img, x, 0).map(|_| canvas.into()).ok()
+        })
+        .unwrap_or(img);
+
     let mut converted: Vec<u8> = Vec::new();
     img.write_to(&mut Cursor::new(&mut converted), ImageOutputFormat::Png)?;
-    Ok(converted)
+    Ok((converted, layout))
 }
 
-async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyhow::Result<Vec<u8>> {
-    log::debug!("convert a video with config: {:?}...", config);
+async fn convert_video(
+    path: &Path,
+    layout: Option<LayoutProp>,
+    playback: Option<PlaybackProp>,
+) -> anyhow::Result<(Vec<u8>, LayoutProp, PlaybackProp)> {
+    log::debug!("convert a video with {:?}, {:?}...", layout, playback);
     #[rustfmt::skip]
     let args = [
         "-select_streams", "v", "-show_entries", "stream=width,height:format=duration",
@@ -80,37 +67,34 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
     let height: u32 = parse(probe.get(1), "height")?;
     let duration: f32 = parse(probe.get(2), "duration")?;
     log::debug!("video metadata: {}*{}, {:.3}s", width, height, duration);
-    anyhow::ensure!(duration <= 3.0, ConvertError::Duration(duration));
 
-    if config.is_none() {
-        config.replace((width, height).into());
-    }
-    let config = config.unwrap();
-
-    let scale = format!(
-        ",scale=512:{}:force_original_aspect_ratio=decrease",
-        match config.size {
-            ConvertSize::Small => 128,
-            ConvertSize::Medium => 256,
-            ConvertSize::Large => 512,
-        }
+    let layout = layout.unwrap_or((width, height).into());
+    let playback = playback.unwrap_or(PlaybackProp { speed_up: false });
+    anyhow::ensure!(
+        duration <= 3.0 || playback.speed_up,
+        ConvertError::Duration(duration)
     );
-    let (width, height) = config.size.resize(width, height);
-    log::debug!("estimated demensions: {}*{}.", width, height);
-    let pad = if width < 512 && height < 512 {
-        match config.position {
-            Some(ConvertPosition::Left) | None => format!(",pad=512:{}:0:0:black@0", height),
-            Some(ConvertPosition::Center) => format!(",pad=512:{}:(ow-iw)/2:0:black@0", height),
-            Some(ConvertPosition::Right) => format!(",pad=512:{}:(ow-iw):0:black@0", height),
-        }
+
+    let (b_width, b_height, pad_x) = layout.resize(width, height);
+    let scale = format!(
+        ",scale={}:{}:force_original_aspect_ratio=decrease",
+        b_width, b_height
+    );
+    let pad = pad_x
+        .map(|x| format!(",pad={}:{}:{}:0:black@0", b_width, b_height, x))
+        .unwrap_or_default();
+    let itsscale = if playback.speed_up {
+        3.0 / duration
     } else {
-        String::new()
+        1.0
     };
+
     let vf = format!("format=yuva420p,fps=30{}{}", scale, pad);
     log::debug!("ffmpeg vf: {}", vf);
 
     #[rustfmt::skip]
     let args =  [
+        "-itsscale", &itsscale.to_string(),
         "-i", path.to_str().expect("path of tempfile"),
         "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "35",
         "-an", "-vf", &vf, "-f", "webm", "-",
@@ -123,15 +107,16 @@ async fn convert_video(path: &Path, config: &mut Option<ConvertConfig>) -> anyho
         .await?;
     anyhow::ensure!(status.success(), "ffmpeg exited with {:?}", status.code());
     log::debug!("output length: {}.", stdout.len());
-    Ok(stdout)
+    Ok((stdout, layout, playback))
 }
 
 pub async fn convert(
     bot: &AutoSend<Bot>,
     file_id: &str,
     media_type: MediaType,
-    config: &mut Option<ConvertConfig>,
-) -> Result<InputFile, ConvertError> {
+    layout: Option<LayoutProp>,
+    playback: Option<PlaybackProp>,
+) -> Result<(InputFile, LayoutProp, Option<PlaybackProp>), ConvertError> {
     let TgFile {
         file_path,
         file_size,
@@ -149,10 +134,22 @@ pub async fn convert(
         .await
         .map_err(ConvertError::wrap)?;
 
-    let (file_name, data) = match media_type {
-        MediaType::Image => ("sticker.png", convert_image(&tmp_path, config)),
-        MediaType::Video => ("sticker.webm", convert_video(&tmp_path, config).await),
+    let (file_name, data, layout, playback) = match media_type {
+        MediaType::Image => {
+            let (data, layout) = convert_image(&tmp_path, layout).map_err(ConvertError::wrap)?;
+            ("sticker.png", data, layout, None)
+        }
+        MediaType::Video => {
+            let (data, layout, playback) = convert_video(&tmp_path, layout, playback)
+                .await
+                .map_err(ConvertError::wrap)?;
+            ("sticker.webm", data, layout, Some(playback))
+        }
     };
 
-    Ok(InputFile::memory(data.map_err(ConvertError::wrap)?).file_name(file_name))
+    Ok((
+        InputFile::memory(data).file_name(file_name),
+        layout,
+        playback,
+    ))
 }

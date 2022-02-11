@@ -2,6 +2,14 @@ use thiserror::Error;
 use ubyte::ByteUnit;
 
 #[derive(Debug, Error)]
+pub enum CallbackError {
+    #[error("Unknown callback: {0}.")]
+    Unknown(String),
+    #[error("Incompatible callback.")]
+    Incompatible,
+}
+
+#[derive(Debug, Error)]
 pub enum ConvertError {
     #[error("Duration too long: {0:.3}s exceeds 3s.")]
     Duration(f32),
@@ -23,12 +31,12 @@ impl ConvertError {
     }
 }
 
-#[derive(PartialEq, Debug, Error)]
-pub enum ConfigError {
-    #[error("Failed to parse config string: {0}.")]
+#[derive(PartialEq, Debug, Error, Clone)]
+pub enum PropsError {
+    #[error("Failed to parse props string: {0}.")]
     Parse(String),
-    #[error("Failed to get convert config of the message.")]
+    #[error("Failed to get props of the message.")]
     Message,
     #[error("Failed to get the original media.")]
-    Reply,
+    Origin,
 }
